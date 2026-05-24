@@ -2512,14 +2512,14 @@ func Test_Arguments_Diff_RaceSafeFormatting_Slice(t *testing.T) {
 	// Verify slice %p formatting does not deep-traverse slice elements.
 	t.Parallel()
 
-	s := []int{42, 43, 44}
+	s := []int{101, 202, 303}
 	out := formatArg(s)
 
 	assert.Contains(t, out, "[]int=0x", "slice should print header address only")
-	// Use values that don't appear in hex addresses
-	assert.NotContains(t, out, "42", "slice should not expand contents via %p")
-	assert.NotContains(t, out, "43", "slice should not expand contents via %p")
-	assert.NotContains(t, out, "44", "slice should not expand contents via %p")
+	// Use values that don't appear in hex addresses (101=0x65, 202=0xCA, 303=0x12F)
+	assert.NotContains(t, out, "101", "slice should not expand contents via %p")
+	assert.NotContains(t, out, "202", "slice should not expand contents via %p")
+	assert.NotContains(t, out, "303", "slice should not expand contents via %p")
 	assert.NotPanics(t, func() { formatArg(s) })
 }
 

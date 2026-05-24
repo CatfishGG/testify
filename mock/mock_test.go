@@ -2461,7 +2461,79 @@ func TestIssue1785ArgumentWithMutatingStringer(t *testing.T) {
 	m.MethodCalled("Method", &mutatingStringer{N: 2})
 	m.AssertExpectations(t)
 }
+func Test_formatArg(t *testing.T) {
+	t.Parallel()
 
+	// Pointer types should use %p (address only) to avoid deep traversal
+	ptr := 42
+	ptrFmt := formatArg(&ptr)
+	assert.Contains(t, ptrFmt, "*int=0x", "pointer should use %p format")
+
+	// Map types should use %p to avoid concurrent map iteration crashes
+	m := map[string]int{"a": 1}
+	mapFmt := formatArg(m)
+	assert.Contains(t, mapFmt, "map[string]int=0x", "map should use %p format")
+
+	// Slice types should use %p to avoid deep traversal
+	slice := []int{1, 2, 3}
+	sliceFmt := formatArg(slice)
+	assert.Contains(t, sliceFmt, "[]int=0x", "slice should use %p format")
+
+	// Channel types should use %p
+	ch := make(chan int)
+	chFmt := formatArg(ch)
+	assert.Contains(t, chFmt, "chan int=0x", "chan should use %p format")
+
+	// Basic types should use %v (readable value)
+	assert.Equal(t, "(int=42)", formatArg(42))
+	assert.Equal(t, "(string=hello)", formatArg("hello"))
+	assert.Equal(t, "<nil>", formatArg(nil))
+}
+
+func Test_Arguments_Diff_RaceSafeFormatting(t *testing.T) {
+	// Verify that formatArg with %p for maps does not deeply traverse
+	// the map bucket array (which is what caused the crash in #1866).
+	// We verify this by checking the output format: a map formatted with
+	// %p shows only the header pointer, not the key-value contents.
+	t.Parallel()
+
+	m := map[string]int{"key": 1}
+	out := formatArg(m)
+
+	// Must contain the type and a hex address (not key/value pairs)
+	assert.Contains(t, out, "map[string]int=0x", "map should print header address only")
+	assert.NotContains(t, out, "key", "map should not expand contents via %p")
+
+	// Also verify it doesn't panic with a live map
+	assert.NotPanics(t, func() { formatArg(m) })
+}
+
+func Test_Arguments_Diff_RaceSafeFormatting_Slice(t *testing.T) {
+	// Verify slice %p formatting does not deep-traverse slice elements.
+	t.Parallel()
+
+	s := []int{42, 43, 44}
+	out := formatArg(s)
+
+	assert.Contains(t, out, "[]int=0x", "slice should print header address only")
+	// Use values that don't appear in hex addresses
+	assert.NotContains(t, out, "42", "slice should not expand contents via %p")
+	assert.NotContains(t, out, "43", "slice should not expand contents via %p")
+	assert.NotContains(t, out, "44", "slice should not expand contents via %p")
+	assert.NotPanics(t, func() { formatArg(s) })
+}
+
+func Test_Arguments_Diff_RaceSafeFormatting_Pointer(t *testing.T) {
+	// Verify pointer %p formatting does not dereference the pointer.
+	t.Parallel()
+
+	val := 999
+	out := formatArg(&val)
+
+	assert.Contains(t, out, "*int=0x", "pointer should print address only")
+	assert.NotContains(t, out, "999", "pointer should not dereference via %p")
+	assert.NotPanics(t, func() { formatArg(&val) })
+}
 func TestIssue1227AssertExpectationsForObjectsWithMock(t *testing.T) {
 	mockT := &MockTestingT{}
 	AssertExpectationsForObjects(mockT, Mock{})

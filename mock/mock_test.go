@@ -2534,6 +2534,84 @@ func Test_Arguments_Diff_RaceSafeFormatting_Pointer(t *testing.T) {
 	assert.NotContains(t, out, "999", "pointer should not dereference via %p")
 	assert.NotPanics(t, func() { formatArg(&val) })
 }
+func Test_CallMockWithConcurrentlyModifiedPointerArg(t *testing.T) {
+	// Regression test for https://github.com/stretchr/testify/issues/1597.
+	// Arguments.Diff uses formatArg which now uses %%p (address-only) for pointer
+	// types instead of %%v to avoid deep-traversing the pointed-to struct while
+	// it is being concurrently modified.
+	m := &Mock{}
+	m.On("Question", Anything).Return(42)
+
+	ptrArg := &struct{ Question string }{Question: "What is the meaning of life?"}
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ptrArg.Question = "What is 7 * 6?"
+	}()
+
+	// MethodCalled triggers findExpectedCall -> Arguments.Diff -> formatArg on ptrArg.
+	// If formatArg used %%v (deep-traverse) instead of %%p (address-only),
+	// go test -race would report a data race.
+	args := m.MethodCalled("Question", ptrArg)
+	assert.Equal(t, 42, args.Int(0))
+
+	wg.Wait()
+	m.AssertExpectations(t)
+}
+
+func Test_CallMockWithConcurrentlyModifiedSliceArg(t *testing.T) {
+	// Regression test for https://github.com/stretchr/testify/issues/1597.
+	// formatArg uses %%p for slices to avoid deep-traversing slice elements
+	// while they are being concurrently modified.
+	m := &Mock{}
+	m.On("Fetch", Anything).Return("ok")
+
+	sliceArg := []int{1, 2, 3}
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sliceArg[0] = 999
+	}()
+
+	// Arguments.Diff calls formatArg on sliceArg. With %%p the slice header
+	// address is printed without traversing elements, avoiding the race.
+	args := m.MethodCalled("Fetch", sliceArg)
+	assert.Equal(t, "ok", args.String(0))
+
+	wg.Wait()
+	m.AssertExpectations(t)
+}
+
+func Test_CallMockWithConcurrentlyModifiedMapArg(t *testing.T) {
+	// Regression test for https://github.com/stretchr/testify/issues/1597.
+	// formatArg uses %%p for maps. Unlike pointers/slices, map iteration
+	// is intrinsically unsafe and panics with "concurrent map iteration"
+	// if %%v is used. %%p avoids this by only printing the map header address.
+	m := &Mock{}
+	m.On("Lookup", Anything).Return("found")
+
+	mapArg := map[string]int{"key": 1}
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		mapArg["key"] = 2
+	}()
+
+	// With %%v this would crash with "concurrent map iteration and map write".
+	// With %%p it safely prints only the map header address.
+	args := m.MethodCalled("Lookup", mapArg)
+	assert.Equal(t, "found", args.String(0))
+
+	wg.Wait()
+	m.AssertExpectations(t)
+}
+
 func TestIssue1227AssertExpectationsForObjectsWithMock(t *testing.T) {
 	mockT := &MockTestingT{}
 	AssertExpectationsForObjects(mockT, Mock{})

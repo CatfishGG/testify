@@ -2491,54 +2491,38 @@ func Test_formatArg(t *testing.T) {
 }
 
 func Test_Arguments_Diff_RaceSafeFormatting(t *testing.T) {
-	// Verify that formatArg with %p for maps does not deeply traverse
-	// the map bucket array (which is what caused the crash in #1866).
-	// We verify this by checking the output format: a map formatted with
-	// %p shows only the header pointer, not the key-value contents.
 	t.Parallel()
 
 	m := map[string]int{"key": 1}
 	out := formatArg(m)
 
-	// Must contain the type and a hex address (not key/value pairs)
-	assert.Contains(t, out, "map[string]int=0x", "map should print header address only")
-	assert.NotContains(t, out, "key", "map should not expand contents via %p")
-
-	// Also verify it doesn't panic with a live map
-	assert.NotPanics(t, func() { formatArg(m) })
+	assert.Contains(t, out, "map[string]int=0x")
+	assert.NotContains(t, out, "key")
 }
 
 func Test_Arguments_Diff_RaceSafeFormatting_Slice(t *testing.T) {
-	// Verify slice %p formatting does not deep-traverse slice elements.
 	t.Parallel()
 
 	s := []int{101, 202, 303}
 	out := formatArg(s)
 
-	assert.Contains(t, out, "[]int=0x", "slice should print header address only")
-	// Use values that don't appear in hex addresses (101=0x65, 202=0xCA, 303=0x12F)
-	assert.NotContains(t, out, "101", "slice should not expand contents via %p")
-	assert.NotContains(t, out, "202", "slice should not expand contents via %p")
-	assert.NotContains(t, out, "303", "slice should not expand contents via %p")
-	assert.NotPanics(t, func() { formatArg(s) })
+	assert.Contains(t, out, "[]int=0x")
+	assert.NotContains(t, out, "101")
+	assert.NotContains(t, out, "202")
+	assert.NotContains(t, out, "303")
 }
 
 func Test_Arguments_Diff_RaceSafeFormatting_Pointer(t *testing.T) {
-	// Verify pointer %p formatting does not dereference the pointer.
 	t.Parallel()
 
 	val := 999
 	out := formatArg(&val)
 
-	assert.Contains(t, out, "*int=0x", "pointer should print address only")
-	assert.NotContains(t, out, "999", "pointer should not dereference via %p")
-	assert.NotPanics(t, func() { formatArg(&val) })
+	assert.Contains(t, out, "*int=0x")
+	assert.NotContains(t, out, "999")
 }
 func Test_CallMockWithConcurrentlyModifiedPointerArg(t *testing.T) {
 	// Regression test for https://github.com/stretchr/testify/issues/1597.
-	// Arguments.Diff uses formatArg which now uses %%p (address-only) for pointer
-	// types instead of %%v to avoid deep-traversing the pointed-to struct while
-	// it is being concurrently modified.
 	m := &Mock{}
 	m.On("Question", Anything).Return(42)
 
@@ -2551,9 +2535,6 @@ func Test_CallMockWithConcurrentlyModifiedPointerArg(t *testing.T) {
 		ptrArg.Question = "What is 7 * 6?"
 	}()
 
-	// MethodCalled triggers findExpectedCall -> Arguments.Diff -> formatArg on ptrArg.
-	// If formatArg used %%v (deep-traverse) instead of %%p (address-only),
-	// go test -race would report a data race.
 	args := m.MethodCalled("Question", ptrArg)
 	assert.Equal(t, 42, args.Int(0))
 
@@ -2563,8 +2544,6 @@ func Test_CallMockWithConcurrentlyModifiedPointerArg(t *testing.T) {
 
 func Test_CallMockWithConcurrentlyModifiedSliceArg(t *testing.T) {
 	// Regression test for https://github.com/stretchr/testify/issues/1597.
-	// formatArg uses %%p for slices to avoid deep-traversing slice elements
-	// while they are being concurrently modified.
 	m := &Mock{}
 	m.On("Fetch", Anything).Return("ok")
 
@@ -2577,8 +2556,6 @@ func Test_CallMockWithConcurrentlyModifiedSliceArg(t *testing.T) {
 		sliceArg[0] = 999
 	}()
 
-	// Arguments.Diff calls formatArg on sliceArg. With %%p the slice header
-	// address is printed without traversing elements, avoiding the race.
 	args := m.MethodCalled("Fetch", sliceArg)
 	assert.Equal(t, "ok", args.String(0))
 
@@ -2588,9 +2565,6 @@ func Test_CallMockWithConcurrentlyModifiedSliceArg(t *testing.T) {
 
 func Test_CallMockWithConcurrentlyModifiedMapArg(t *testing.T) {
 	// Regression test for https://github.com/stretchr/testify/issues/1597.
-	// formatArg uses %%p for maps. Unlike pointers/slices, map iteration
-	// is intrinsically unsafe and panics with "concurrent map iteration"
-	// if %%v is used. %%p avoids this by only printing the map header address.
 	m := &Mock{}
 	m.On("Lookup", Anything).Return("found")
 
@@ -2603,8 +2577,6 @@ func Test_CallMockWithConcurrentlyModifiedMapArg(t *testing.T) {
 		mapArg["key"] = 2
 	}()
 
-	// With %%v this would crash with "concurrent map iteration and map write".
-	// With %%p it safely prints only the map header address.
 	args := m.MethodCalled("Lookup", mapArg)
 	assert.Equal(t, "found", args.String(0))
 
